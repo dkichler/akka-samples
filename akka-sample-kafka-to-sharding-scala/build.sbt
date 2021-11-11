@@ -1,9 +1,16 @@
+import com.lightbend.cinnamon.sbt.Cinnamon
+
+val token = System.getenv("LIGHTBEND_COMMERCIAL_TOKEN")
+resolvers in ThisBuild += "lightbend-commercial-mvn" at s"https://repo.lightbend.com/pass/$token/commercial-releases"
+resolvers in ThisBuild += Resolver.url("lightbend-commercial-ivy", url(s"https://repo.lightbend.com/pass/$token/commercial-releases"))(Resolver.ivyStylePatterns)
+
 val AkkaVersion = "2.6.17"
 val AlpakkaKafkaVersion = "2.0.4"
 val AkkaManagementVersion = "1.0.5"
 val AkkaHttpVersion = "10.1.11"
 val EmbeddedKafkaVersion = "2.4.1.1"
 val LogbackVersion = "1.2.3"
+val CinnamonVersion = "2.16.2"
 
 ThisBuild / scalaVersion := "2.13.5"
 ThisBuild / organization := "com.lightbend.akka.samples"
@@ -21,10 +28,16 @@ ThisBuild / resolvers ++= Seq(
   Resolver.bintrayRepo("akka", "snapshots")
 )
 
+
+
 Global / cancelable := true // ctrl-c
+ThisBuild / run / cinnamon := true
 
 lazy val `akka-sample-kafka-to-sharding` = project.in(file(".")).aggregate(producer, processor, client)
 
+lazy val exposeJmx = Seq("-Dcom.sun.management.jmxremote.port=9999",
+  "-Dcom.sun.management.jmxremote.authenticate=false",
+  "-Dcom.sun.management.jmxremote.ssl=false")
 lazy val kafka = project
   .in(file("kafka"))
   .settings(
@@ -42,11 +55,16 @@ lazy val client = project
         "com.typesafe.akka" %% "akka-stream" % AkkaVersion,
         "com.typesafe.akka" %% "akka-discovery" % AkkaVersion))
 
+
 lazy val processor = project
   .in(file("processor"))
-  .enablePlugins(AkkaGrpcPlugin, JavaAgent)
+  .enablePlugins(AkkaGrpcPlugin, JavaAgent, Cinnamon)
   .settings(javaAgents += "org.mortbay.jetty.alpn" % "jetty-alpn-agent" % "2.0.9" % "runtime;test")
-  .settings(libraryDependencies ++= Seq(
+  .settings(
+    javaOptions ++= exposeJmx,
+    run / cinnamon := true,
+    cinnamonLogLevel := "INFO",
+    libraryDependencies ++= Seq(
       "com.typesafe.akka" %% "akka-stream-kafka" % AlpakkaKafkaVersion,
       "com.typesafe.akka" %% "akka-stream-kafka-cluster-sharding" % AlpakkaKafkaVersion,
       "com.typesafe.akka" %% "akka-stream" % AkkaVersion,
@@ -57,6 +75,13 @@ lazy val processor = project
       "com.lightbend.akka.management" %% "akka-management" % AkkaManagementVersion,
       "com.lightbend.akka.management" %% "akka-management-cluster-http" % AkkaManagementVersion,
       "com.typesafe.akka" %% "akka-http-spray-json" % AkkaHttpVersion,
+      Cinnamon.library.cinnamonAkkaTyped,
+      Cinnamon.library.cinnamonPrometheus,
+      // lets it export all metrics
+      Cinnamon.library.cinnamonPrometheusHttpServer,
+      Cinnamon.library.cinnamonJmxImporter,
+      // Disabling this dependency to avoid pulling in the full reference.conf, and demonstrate the issue with only a subset of configuration in cinnamon.conf
+      //Cinnamon.library.cinnamonKafkaConsumerJmxImporter, // exports Kafka consumer metrics
       "ch.qos.logback" % "logback-classic" % LogbackVersion,
       "com.typesafe.akka" %% "akka-actor-testkit-typed" % AkkaVersion % Test,
       "org.scalatest" %% "scalatest" % "3.0.8" % Test))
@@ -64,8 +89,12 @@ lazy val processor = project
 lazy val producer = project
   .in(file("producer"))
   .settings(PB.targets in Compile := Seq(scalapb.gen() -> (sourceManaged in Compile).value))
-  .settings(libraryDependencies ++= Seq(
+  .settings(
+    javaOptions ++= exposeJmx,
+    libraryDependencies ++= Seq(
       "com.typesafe.akka" %% "akka-stream-kafka" % AlpakkaKafkaVersion,
       "com.typesafe.akka" %% "akka-stream" % AkkaVersion,
       "ch.qos.logback" % "logback-classic" % "1.2.3",
-      "org.scalatest" %% "scalatest" % "3.0.8" % Test))
+      "org.scalatest" %% "scalatest" % "3.0.8" % Test
+    )
+  )
